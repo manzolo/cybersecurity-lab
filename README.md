@@ -68,9 +68,6 @@ cd cybersecurity-lab
 
 | Command | Description |
 |---------|-------------|
-| `./lab.sh update-scripts` | Update Python scripts without VM recreation |
-| `./lab.sh update-services` | Update systemd service configurations |
-| `./lab.sh update-motd` | Refresh dynamic welcome messages |
 | `./lab.sh restart-services` | Restart all lab services |
 | `./lab.sh service-status` | Detailed service health check |
 | `./lab.sh preview-motd` | Preview welcome screens for both VMs |
