@@ -162,22 +162,22 @@ This lab environment is designed to teach:
 <img width="759" height="539" alt="Attacker VM MOTD with ASCII art and system information" src="https://github.com/user-attachments/assets/629d546a-616b-4d23-9f4f-621705a57a75" />
 
 ### Interactive Testing Suite
-<img width="828" height="850" alt="Comprehensive vulnerability testing interface" src="https://github.com/user-attachments/assets/ac7a2725-31e9-4cc5-9ef0-338516dc133b" />
+<img width="1085" height="905" alt="image" src="https://github.com/user-attachments/assets/ea2f783d-53a5-4491-b39b-c4f68cb41bcf" />
 
 ### Web Vulnerability Scanner
-<img width="828" height="658" alt="Web fuzzer detecting XSS and directory traversal" src="https://github.com/user-attachments/assets/101955fa-837d-4a71-9e42-d867453294e1" />
+<img width="1085" height="905" alt="image" src="https://github.com/user-attachments/assets/ce83d962-ed14-4c56-9dfc-dcc1b78e5008" />
 
 ### Port Scanner Results
-<img width="828" height="658" alt="Advanced port scanning with service detection" src="https://github.com/user-attachments/assets/be5eaf84-db08-49e8-bb49-f9c7fbecaeef" />
+<img width="1085" height="680" alt="image" src="https://github.com/user-attachments/assets/9a7677bb-ed39-40d1-89a8-6bdebf19eb13" />
 
 ### Interactive TCP Client
-<img width="828" height="658" alt="Interactive client with exploitation hints" src="https://github.com/user-attachments/assets/f3d34108-5150-418d-97bb-2a51bddaae98" />
+<img width="1085" height="680" alt="image" src="https://github.com/user-attachments/assets/13a81738-d4d1-42ae-b494-e9df80469845" />
 
-### Service Management Interface
-<img width="936" height="760" alt="Detailed service status and management" src="https://github.com/user-attachments/assets/e83f79bc-cfaa-4f9a-bd47-29971a2d6d43" />
+### SSH Interface
+<img width="1085" height="918" alt="image" src="https://github.com/user-attachments/assets/439842b5-43f8-49be-836c-a87d2c80f7c4" />
 
 ### System Status Overview
-<img width="936" height="636" alt="Comprehensive system status dashboard" src="https://github.com/user-attachments/assets/77e79261-e6c1-4c56-88c1-4f3109fe8308" />
+<img width="1085" height="416" alt="image" src="https://github.com/user-attachments/assets/8a13cb0c-9e1c-4a18-b180-8eb5b664ee28" />
 
 ## 🔧 Advanced Usage
 
