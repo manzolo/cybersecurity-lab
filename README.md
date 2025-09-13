@@ -1,7 +1,6 @@
 # Cybersecurity Lab Environment
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-blue)](https://multipass.run/)
 [![Version](https://img.shields.io/badge/Version-3.3-green)](https://github.com/manzolo/cybersecurity-lab)
 
 A comprehensive, modular cybersecurity testing environment using Multipass VMs with intentionally vulnerable services designed for hands-on educational purposes.
@@ -16,7 +15,6 @@ This project creates a controlled, isolated environment where students and cyber
 - **🎨 Dynamic MOTD System**: Immersive ASCII art banners with real-time system information
 - **🛠️ Advanced Testing Tools**: Port scanner, web fuzzer, interactive client with exploitation hints
 - **📊 Comprehensive Logging**: Structured logs with JSON export capabilities  
-- **⚡ Granular Management**: Update individual components without VM recreation
 - **🎓 Educational Focus**: Built-in guidance and security reminders
 
 ## 🚀 Quick Setup
