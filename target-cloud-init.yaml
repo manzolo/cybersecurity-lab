@@ -1,0 +1,30 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+packages:
+  - python3
+  - python3-venv
+  - ufw
+
+write_files:
+  - path: /opt/server.py
+    content: |
+      #include
+      server.py
+  - path: /etc/systemd/system/simple-server.service
+    content: |
+      #include
+      simple-server.service
+
+runcmd:
+  # Ricarica i daemon e abilita il servizio
+  - [bash, -lc, 'systemctl daemon-reload']
+  - [bash, -lc, 'systemctl enable --now simple-server.service']
+  # Configura UFW
+  - [bash, -lc, 'ufw --force reset']
+  - [bash, -lc, 'ufw default deny incoming']
+  - [bash, -lc, 'ufw default allow outgoing']
+  - [bash, -lc, 'ufw allow OpenSSH']
+  - [bash, -lc, 'ufw allow 9000/tcp']
+  - [bash, -lc, 'ufw --force enable']
+final_message: "Target ready: server sulla porta 9000 e UFW impostato (9000 allow, OpenSSH allow)."
