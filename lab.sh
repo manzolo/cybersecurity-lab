@@ -27,7 +27,7 @@ readonly CYAN='\033[0;36m'
 readonly NC='\033[0m'
 
 # Source modular components
-for module in utils vm_management testing menu; do
+for module in utils vm_management testing menu motd aliases; do
     if [[ -f "${SCRIPTS_DIR}/${module}.sh" ]]; then
         source "${SCRIPTS_DIR}/${module}.sh"
     fi
@@ -366,33 +366,6 @@ configure_environment_post_create() {
     verify_services || warn "Some services may not be ready yet"
 }
 
-configure_attacker_aliases() {
-    local target_ip="$1"
-    log "Configuring attacker aliases for target: $target_ip"
-    
-    multipass exec "$VM_ATTACKER" -- bash -c "
-        mkdir -p /home/ubuntu/logs
-        chmod 755 /home/ubuntu/logs
-        
-        cat > /home/ubuntu/.bash_aliases << EOF
-# Cybersecurity Lab Aliases
-alias lab-test='echo \"Running comprehensive tests...\" && python3 /opt/attack-scripts/port-scanner.py $target_ip && python3 /opt/attack-scripts/connection-tester.py $target_ip -t both -c 3 && python3 /opt/attack-scripts/web-fuzzer.py $target_ip'
-alias lab-connect='echo \"Connecting to vulnerable TCP server...\" && python3 /opt/attack-scripts/interactive-client.py $target_ip -p 9000'
-alias lab-scan='python3 /opt/attack-scripts/port-scanner.py'
-alias lab-web='python3 /opt/attack-scripts/web-fuzzer.py'
-alias lab-conn='python3 /opt/attack-scripts/connection-tester.py'
-alias lab-interactive='python3 /opt/attack-scripts/interactive-client.py'
-alias lab-logs='ls -la ~/logs && echo && tail -20 ~/logs/attacker.log 2>/dev/null || echo \"No logs yet - run lab-test first\"'
-alias lab-help='echo \"Available lab commands:\" && echo \"  lab-test      - Run full vulnerability test suite\" && echo \"  lab-connect   - Interactive TCP client\" && echo \"  lab-scan <ip> - Port scanner\" && echo \"  lab-web <ip>  - Web vulnerability fuzzer\" && echo \"  lab-logs      - Show recent activity logs\"'
-EOF
-        
-        chown ubuntu:ubuntu /home/ubuntu/.bash_aliases
-        pip3 install requests >/dev/null 2>&1 || sudo apt-get install -y python3-requests >/dev/null 2>&1
-    "
-    
-    success "Attacker VM configured with aliases and dependencies"
-}
-
 verify_services() {
     log "Verifying deployed services..."
     
@@ -461,8 +434,6 @@ show_quick_commands() {
     echo -e "  ${YELLOW}$0 client${NC}                  # Interactive TCP client"
     echo -e "  ${YELLOW}$0 status${NC}                  # Check status"
     echo -e "  ${YELLOW}$0 service-status${NC}          # Detailed service status"
-    echo -e "  ${YELLOW}$0 update-scripts${NC}          # Update scripts only"
-    echo -e "  ${YELLOW}$0 update-services${NC}         # Update service files"
     
     echo -e "\n${BLUE}In attacker VM, use these shortcuts:${NC}"
     echo -e "  ${CYAN}lab-help${NC}      - Show all available commands"
@@ -569,10 +540,15 @@ show_enhanced_help() {
     echo -e "  ${YELLOW}help${NC}            Show this help message"
     echo
     echo -e "${BLUE}MANAGEMENT OPTIONS:${NC}"
-    echo -e "  ${YELLOW}update-scripts${NC}  Update Python scripts on existing VMs"
-    echo -e "  ${YELLOW}update-services${NC} Update systemd service files"
     echo -e "  ${YELLOW}restart-services${NC} Restart all lab services"
     echo -e "  ${YELLOW}service-status${NC}  Show detailed service status"
+    echo -e "  ${YELLOW}preview-motd${NC}    Preview MOTD for both VMs"
+    echo
+    echo -e "${BLUE}VISUAL ENHANCEMENTS:${NC}"
+    echo -e "  • ${GREEN}Dynamic MOTD system${NC} with real-time system information"
+    echo -e "  • ${GREEN}ASCII art banners${NC} for immersive experience"
+    echo -e "  • ${GREEN}Color-coded status${NC} indicators for quick assessment"
+    echo -e "  • ${GREEN}Attack statistics${NC} and connection monitoring"
     echo
     echo -e "${BLUE}PROJECT STRUCTURE:${NC}"
     echo -e "  target-scripts/       ${GREEN}# Python scripts for target VM${NC}"
@@ -581,14 +557,28 @@ show_enhanced_help() {
     echo -e "  templates/            ${GREEN}# Cloud-init templates${NC}"
     echo -e "  scripts/              ${GREEN}# Bash utility modules${NC}"
     echo
-    echo -e "${BLUE}EXAMPLES:${NC}"
-    echo -e "  ${CYAN}$0 create${NC}                    # Create complete environment"
-    echo -e "  ${CYAN}$0 service-status${NC}            # Check service health"
-    echo -e "  ${CYAN}$0 restart-services${NC}          # Restart all services"
-    echo -e "  ${CYAN}$0 update-services${NC}           # Update service configurations"
+    echo -e "${BLUE}MOTD FEATURES:${NC}"
+    echo -e "  • ${CYAN}Real-time system stats${NC}: Load, memory, uptime, connections"
+    echo -e "  • ${CYAN}Target information${NC}: IP addresses, available services"
+    echo -e "  • ${CYAN}Quick command reference${NC}: Most used commands at login"
+    echo -e "  • ${CYAN}Attack statistics${NC}: Daily connection counts and activity"
+    echo -e "  • ${CYAN}Security reminders${NC}: Educational use warnings"
     echo
-    echo -e "${GREEN}TIP:${NC} All components can be updated individually without recreating VMs"
+    echo -e "${BLUE}EXAMPLES:${NC}"
+    echo -e "  ${CYAN}$0 create${NC}                    # Create complete environment with MOTD"
+    echo -e "  ${CYAN}$0 preview-motd${NC}              # Preview both VM welcome screens"
+    echo -e "  ${CYAN}$0 update-motd${NC}               # Update MOTD with current system info"
+    echo -e "  ${CYAN}multipass shell attacker${NC}     # See custom attacker MOTD"
+    echo -e "  ${CYAN}multipass shell target${NC}       # See custom target MOTD"
+    echo
+    echo -e "${BLUE}MOTD COMMANDS IN VMs:${NC}"
+    echo -e "  ${GREEN}lab-motd${NC}         Show welcome message again (attacker VM)"
+    echo -e "  ${GREEN}lab-help${NC}         Show all lab commands with descriptions"
+    echo
+    echo -e "${GREEN}TIP:${NC} The MOTD system provides an immersive cybersecurity lab experience"
+    echo -e "with real-time information and visual appeal for educational engagement."
 }
+
 
 # =============================================================================
 # MAIN FUNCTION
@@ -598,7 +588,7 @@ main() {
     if type print_banner >/dev/null 2>&1; then
         print_banner
     else
-        echo -e "${CYAN}=== CYBERSECURITY LAB v3.2 - Complete Modular Version ===${NC}"
+        echo -e "${CYAN}=== CYBERSECURITY LAB v3.3 - Enhanced with Dynamic MOTD ===${NC}"
     fi
     
     if type check_dependencies >/dev/null 2>&1; then
@@ -637,17 +627,14 @@ main() {
                 basic_run_interactive_client
             fi
             ;;
-        update-scripts)
-            update_scripts_only
-            ;;
-        update-services)
-            update_services_only
-            ;;
         restart-services)
             restart_services
             ;;
         service-status)
             show_service_status
+            ;;
+        preview-motd)
+            preview_motd
             ;;
         menu|connect)
             if type interactive_menu >/dev/null 2>&1; then
