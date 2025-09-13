@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# CYBERSECURITY LAB - Main Script with Separated Python Scripts
+# CYBERSECURITY LAB - Complete Script with Separated Services
 # =============================================================================
 
 set -euo pipefail
@@ -13,6 +13,7 @@ readonly TEMPLATES_DIR="${SCRIPT_DIR}/templates"
 readonly SCRIPTS_DIR="${SCRIPT_DIR}/scripts"
 readonly TARGET_SCRIPTS_DIR="${SCRIPT_DIR}/target-scripts"
 readonly ATTACKER_SCRIPTS_DIR="${SCRIPT_DIR}/attacker-scripts"
+readonly SERVICES_DIR="${SCRIPT_DIR}/services"
 readonly VM_ATTACKER="attacker"
 readonly VM_TARGET="target"
 
@@ -25,57 +26,247 @@ readonly PURPLE='\033[0;35m'
 readonly CYAN='\033[0;36m'
 readonly NC='\033[0m'
 
-# Source modular components (with error checking)
-if [[ -f "${SCRIPTS_DIR}/utils.sh" ]]; then
-    source "${SCRIPTS_DIR}/utils.sh"
-fi
-
-if [[ -f "${SCRIPTS_DIR}/vm_management.sh" ]]; then
-    source "${SCRIPTS_DIR}/vm_management.sh"
-fi
-
-if [[ -f "${SCRIPTS_DIR}/testing.sh" ]]; then
-    source "${SCRIPTS_DIR}/testing.sh"
-fi
-
-if [[ -f "${SCRIPTS_DIR}/menu.sh" ]]; then
-    source "${SCRIPTS_DIR}/menu.sh"
-fi
+# Source modular components
+for module in utils vm_management testing menu; do
+    if [[ -f "${SCRIPTS_DIR}/${module}.sh" ]]; then
+        source "${SCRIPTS_DIR}/${module}.sh"
+    fi
+done
 
 # =============================================================================
-# NEW FUNCTIONS FOR SEPARATED SCRIPTS
+# SERVICE MANAGEMENT FUNCTIONS
+# =============================================================================
+
+check_service_files() {
+    local missing_services=()
+    local services=(
+        "vulnerable-server.service"
+        "vulnerable-web.service" 
+        "target-monitor.service"
+    )
+    
+    if [[ ! -d "$SERVICES_DIR" ]]; then
+        error "Services directory not found: $SERVICES_DIR"
+        return 1
+    fi
+    
+    for service in "${services[@]}"; do
+        if [[ ! -f "${SERVICES_DIR}/${service}" ]]; then
+            missing_services+=("$service")
+        fi
+    done
+    
+    if [[ ${#missing_services[@]} -gt 0 ]]; then
+        error "Missing service files: ${missing_services[*]}"
+        return 1
+    fi
+    
+    return 0
+}
+
+deploy_systemd_services() {
+    log "Deploying systemd service files..."
+    
+    local services=(
+        "vulnerable-server.service"
+        "vulnerable-web.service"
+        "target-monitor.service"
+    )
+    
+    for service in "${services[@]}"; do
+        local service_path="${SERVICES_DIR}/${service}"
+        
+        log "Deploying service: $service"
+        multipass transfer "$service_path" "$VM_TARGET:/tmp/$service"
+        
+        multipass exec "$VM_TARGET" -- bash -c "
+            sudo mv /tmp/$service /etc/systemd/system/$service
+            sudo chown root:root /etc/systemd/system/$service
+            sudo chmod 644 /etc/systemd/system/$service
+        "
+    done
+    
+    success "Systemd service files deployed successfully"
+}
+
+configure_target_services() {
+    log "Configuring target services from separated files..."
+    
+    check_service_files || return 1
+    deploy_systemd_services
+    
+    multipass exec "$VM_TARGET" -- bash -c "
+        # Create log files with proper permissions
+        sudo touch /var/log/vulnerable-server.log
+        sudo touch /var/log/vulnerable-web.log  
+        sudo touch /var/log/target-monitor.log
+        sudo chmod 664 /var/log/vulnerable-*.log /var/log/target-monitor.log
+        
+        # Create dedicated lab log directory
+        sudo mkdir -p /var/log/cybersecurity-lab
+        sudo chmod 755 /var/log/cybersecurity-lab
+        
+        # Reload systemd and enable services
+        sudo systemctl daemon-reload
+        sudo systemctl enable vulnerable-server.service vulnerable-web.service target-monitor.service
+        sudo systemctl start vulnerable-server.service vulnerable-web.service target-monitor.service
+        
+        # Wait and check status
+        sleep 3
+        echo 'Service Status Check:'
+        systemctl is-active vulnerable-server.service && echo '✓ TCP Server: ACTIVE' || echo '✗ TCP Server: FAILED'
+        systemctl is-active vulnerable-web.service && echo '✓ Web Server: ACTIVE' || echo '✗ Web Server: FAILED' 
+        systemctl is-active target-monitor.service && echo '✓ Monitor: ACTIVE' || echo '✗ Monitor: FAILED'
+    "
+    
+    success "Target services configured and started"
+}
+
+show_service_status() {
+    if ! multipass list | grep -q "$VM_TARGET.*Running"; then
+        warn "Target VM is not running"
+        return 1
+    fi
+    
+    echo -e "${BLUE}=== SYSTEMD SERVICES STATUS ===${NC}"
+    
+    multipass exec "$VM_TARGET" -- bash -c '
+        services=("vulnerable-server.service" "vulnerable-web.service" "target-monitor.service")
+        
+        for service in "${services[@]}"; do
+            echo "----------------------------------------"
+            echo "Service: $service"
+            echo "----------------------------------------"
+            
+            if systemctl is-active --quiet "$service"; then
+                echo "Status: ✓ ACTIVE"
+                uptime=$(systemctl show "$service" --property=ActiveEnterTimestamp --value)
+                echo "Started: $uptime"
+                echo "Recent logs:"
+                journalctl -u "$service" --no-pager -n 3 --output=short 2>/dev/null || echo "No logs available"
+            else
+                echo "Status: ✗ INACTIVE"
+                echo "Error logs:"
+                journalctl -u "$service" --no-pager -n 3 --output=short 2>/dev/null || echo "No logs available"
+            fi
+            echo
+        done
+        
+        echo "----------------------------------------"
+        echo "Listening Ports:"
+        echo "----------------------------------------"
+        ss -tlnp | grep -E ":(9000|8080|22)" || echo "No lab services listening"
+    '
+}
+
+restart_services() {
+    if ! multipass list | grep -q "$VM_TARGET.*Running"; then
+        error "Target VM is not running"
+        return 1
+    fi
+    
+    log "Restarting lab services..."
+    
+    multipass exec "$VM_TARGET" -- bash -c '
+        services=("vulnerable-server.service" "vulnerable-web.service" "target-monitor.service")
+        
+        for service in "${services[@]}"; do
+            echo "Restarting $service..."
+            sudo systemctl restart "$service"
+            
+            if systemctl is-active --quiet "$service"; then
+                echo "✓ $service restarted successfully"
+            else
+                echo "✗ $service failed to restart"
+                journalctl -u "$service" --no-pager -n 5 2>/dev/null || true
+            fi
+        done
+    '
+    
+    success "Service restart completed"
+}
+
+update_services_only() {
+    if [[ ! -f "${CONFIG_DIR}/vm_ips.conf" ]]; then
+        error "Environment not configured. Run 'create' first."
+    fi
+    
+    log "Updating systemd service files..."
+    
+    if ! multipass list | grep -q "$VM_TARGET.*Running"; then
+        error "Target VM is not running"
+    fi
+    
+    deploy_systemd_services
+    
+    multipass exec "$VM_TARGET" -- bash -c "
+        sudo systemctl daemon-reload
+        echo 'Systemd configuration reloaded'
+    "
+    
+    info "Service files updated. Use 'restart-services' to apply changes."
+    success "Service update completed"
+}
+
+# =============================================================================
+# UPDATED MAIN FUNCTIONS
 # =============================================================================
 
 check_script_directories() {
-    """Check if all required script directories exist"""
     local missing_dirs=()
     
-    if [[ ! -d "$TARGET_SCRIPTS_DIR" ]]; then
-        missing_dirs+=("target-scripts")
-    fi
+    local required_dirs=(
+        "$TARGET_SCRIPTS_DIR:target-scripts"
+        "$ATTACKER_SCRIPTS_DIR:attacker-scripts" 
+        "$TEMPLATES_DIR:templates"
+        "$SERVICES_DIR:services"
+    )
     
-    if [[ ! -d "$ATTACKER_SCRIPTS_DIR" ]]; then
-        missing_dirs+=("attacker-scripts")
-    fi
-    
-    if [[ ! -d "$TEMPLATES_DIR" ]]; then
-        missing_dirs+=("templates")
-    fi
+    for dir_info in "${required_dirs[@]}"; do
+        IFS=':' read -r dir_path dir_name <<< "$dir_info"
+        if [[ ! -d "$dir_path" ]]; then
+            missing_dirs+=("$dir_name")
+        fi
+    done
     
     if [[ ${#missing_dirs[@]} -gt 0 ]]; then
         error "Missing required directories: ${missing_dirs[*]}"
         echo -e "${YELLOW}Expected project structure:${NC}"
         echo "cybersecurity-lab/"
         echo "├── target-scripts/     # Python scripts for target VM"
-        echo "├── attacker-scripts/   # Python scripts for attacker VM"
+        echo "├── attacker-scripts/   # Python scripts for attacker VM"  
         echo "├── templates/          # Cloud-init templates"
+        echo "├── services/           # Systemd service files"
         echo "└── scripts/            # Bash utility scripts"
-        exit 1
+        return 1
     fi
+    
+    return 0
+}
+
+create_environment() {
+    log "Creating enhanced lab environment with separated scripts and services..."
+    
+    check_script_directories
+    mkdir -p "$CONFIG_DIR" "$LOGS_DIR"
+    
+    if [[ ! -f "${TEMPLATES_DIR}/target-cloud-init.yaml" ]]; then
+        error "Template files not found in ${TEMPLATES_DIR}/"
+    fi
+    
+    log "Preparing configuration files..."
+    cp "${TEMPLATES_DIR}/target-cloud-init.yaml" "${CONFIG_DIR}/target-cloud-init.yaml"
+    cp "${TEMPLATES_DIR}/attacker-cloud-init.yaml" "${CONFIG_DIR}/attacker-cloud-init.yaml"
+    
+    create_vms_basic
+    deploy_target_scripts
+    deploy_attacker_scripts  
+    configure_target_services
+    configure_environment_post_create
+    show_environment_summary
 }
 
 deploy_target_scripts() {
-    """Deploy Python scripts to target VM"""
     log "Deploying target scripts..."
     
     local scripts=(
@@ -95,7 +286,6 @@ deploy_target_scripts() {
         log "Transferring $script to target VM..."
         multipass transfer "$script_path" "$VM_TARGET:/tmp/$script"
         
-        # Install with proper permissions
         multipass exec "$VM_TARGET" -- bash -c "
             sudo mv /tmp/$script /opt/
             sudo chmod +x /opt/$script
@@ -107,7 +297,6 @@ deploy_target_scripts() {
 }
 
 deploy_attacker_scripts() {
-    """Deploy Python scripts to attacker VM"""
     log "Deploying attacker scripts..."
     
     local scripts=(
@@ -117,7 +306,6 @@ deploy_attacker_scripts() {
         "web-fuzzer.py"
     )
     
-    # Create attack scripts directory
     multipass exec "$VM_ATTACKER" -- bash -c "
         sudo mkdir -p /opt/attack-scripts
         sudo chown ubuntu:ubuntu /opt/attack-scripts
@@ -135,7 +323,6 @@ deploy_attacker_scripts() {
         log "Transferring $script to attacker VM..."
         multipass transfer "$script_path" "$VM_ATTACKER:/tmp/$script"
         
-        # Install with proper permissions
         multipass exec "$VM_ATTACKER" -- bash -c "
             mv /tmp/$script /opt/attack-scripts/
             chmod +x /opt/attack-scripts/$script
@@ -146,94 +333,48 @@ deploy_attacker_scripts() {
     success "Attacker scripts deployed successfully"
 }
 
-configure_target_services() {
-    """Configure systemd services for target VM"""
-    log "Configuring target services..."
+create_vms_basic() {
+    log "Creating virtual machines with basic configuration..."
     
-    # Create systemd service files
-    multipass exec "$VM_TARGET" -- bash -c "
-        # Vulnerable TCP Server Service
-        sudo tee /etc/systemd/system/vulnerable-server.service > /dev/null << 'EOF'
-[Unit]
-Description=Vulnerable TCP Server for Cybersecurity Lab
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/python3 /opt/vulnerable-server.py
-Restart=always
-RestartSec=5
-User=root
-StandardOutput=syslog
-StandardError=syslog
-SyslogIdentifier=vulnerable-server
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-        # Vulnerable Web Server Service
-        sudo tee /etc/systemd/system/vulnerable-web.service > /dev/null << 'EOF'
-[Unit]
-Description=Vulnerable Web Server
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/python3 /opt/web-server.py
-Restart=always
-RestartSec=5
-User=root
-StandardOutput=syslog
-StandardError=syslog
-SyslogIdentifier=vulnerable-web
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-        # Target Monitor Service
-        sudo tee /etc/systemd/system/target-monitor.service > /dev/null << 'EOF'
-[Unit]
-Description=Target Monitor
-After=network.target
-
-[Service]
-ExecStart=/opt/monitor.sh
-Restart=always
-User=root
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-        # Create log files with proper permissions
-        sudo touch /var/log/vulnerable-server.log
-        sudo touch /var/log/vulnerable-web.log
-        sudo touch /var/log/target-monitor.log
-        sudo chmod 664 /var/log/vulnerable-*.log /var/log/target-monitor.log
-        
-        # Enable and start services
-        sudo systemctl daemon-reload
-        sudo systemctl enable vulnerable-server.service vulnerable-web.service target-monitor.service
-        sudo systemctl start vulnerable-server.service vulnerable-web.service target-monitor.service
-    "
+    log "Creating attacker VM..."
+    multipass launch --name "$VM_ATTACKER" \
+        --cpus 2 --memory 2G --disk 10G \
+        --cloud-init "${CONFIG_DIR}/attacker-cloud-init.yaml" || error "Error creating attacker VM"
     
-    success "Target services configured and started"
+    log "Creating target VM..."
+    multipass launch --name "$VM_TARGET" \
+        --cpus 2 --memory 2G --disk 10G \
+        --cloud-init "${CONFIG_DIR}/target-cloud-init.yaml" || error "Error creating target VM"
+    
+    log "Waiting for VMs to initialize..."
+    sleep 30
+    
+    success "VMs created successfully"
+}
+
+configure_environment_post_create() {
+    local target_ip=$(get_vm_ip "$VM_TARGET")
+    local attacker_ip=$(get_vm_ip "$VM_ATTACKER")
+    
+    log "Target IP: $target_ip"
+    log "Attacker IP: $attacker_ip"
+    
+    save_vm_ips "$target_ip" "$attacker_ip"
+    configure_attacker_aliases "$target_ip"
+    
+    sleep 10
+    verify_services || warn "Some services may not be ready yet"
 }
 
 configure_attacker_aliases() {
-    """Configure convenient aliases in attacker VM"""
     local target_ip="$1"
     log "Configuring attacker aliases for target: $target_ip"
     
     multipass exec "$VM_ATTACKER" -- bash -c "
-        # Create logs directory
         mkdir -p /home/ubuntu/logs
         chmod 755 /home/ubuntu/logs
         
-        # Create convenience aliases
-        cat > /home/ubuntu/.bash_aliases << 'EOF'
+        cat > /home/ubuntu/.bash_aliases << EOF
 # Cybersecurity Lab Aliases
 alias lab-test='echo \"Running comprehensive tests...\" && python3 /opt/attack-scripts/port-scanner.py $target_ip && python3 /opt/attack-scripts/connection-tester.py $target_ip -t both -c 3 && python3 /opt/attack-scripts/web-fuzzer.py $target_ip'
 alias lab-connect='echo \"Connecting to vulnerable TCP server...\" && python3 /opt/attack-scripts/interactive-client.py $target_ip -p 9000'
@@ -246,124 +387,10 @@ alias lab-help='echo \"Available lab commands:\" && echo \"  lab-test      - Run
 EOF
         
         chown ubuntu:ubuntu /home/ubuntu/.bash_aliases
-        
-        # Install Python dependencies
         pip3 install requests >/dev/null 2>&1 || sudo apt-get install -y python3-requests >/dev/null 2>&1
     "
     
     success "Attacker VM configured with aliases and dependencies"
-}
-
-update_scripts_only() {
-    """Update scripts on existing VMs without recreating them"""
-    if [[ ! -f "${CONFIG_DIR}/vm_ips.conf" ]]; then
-        error "Environment not configured. Run 'create' first."
-    fi
-    
-    log "Updating scripts on existing VMs..."
-    
-    # Check if VMs are running
-    if ! multipass list | grep -q "$VM_TARGET.*Running"; then
-        error "Target VM is not running"
-    fi
-    
-    if ! multipass list | grep -q "$VM_ATTACKER.*Running"; then
-        error "Attacker VM is not running"
-    fi
-    
-    # Deploy updated scripts
-    deploy_target_scripts
-    deploy_attacker_scripts
-    
-    # Restart target services
-    log "Restarting target services..."
-    multipass exec "$VM_TARGET" -- bash -c "
-        sudo systemctl restart vulnerable-server.service vulnerable-web.service
-        sudo systemctl status vulnerable-server.service vulnerable-web.service --no-pager
-    "
-    
-    success "Scripts updated successfully"
-}
-
-# =============================================================================
-# UPDATED MAIN FUNCTIONS
-# =============================================================================
-
-create_environment() {
-    log "Creating enhanced lab environment with separated scripts..."
-    
-    # Check prerequisites
-    check_script_directories
-    
-    # Create directory structure
-    mkdir -p "$CONFIG_DIR" "$LOGS_DIR"
-    
-    # Check if templates exist
-    if [[ ! -f "${TEMPLATES_DIR}/target-cloud-init.yaml" ]]; then
-        error "Template files not found. Please ensure templates are in ${TEMPLATES_DIR}/"
-    fi
-    
-    # Copy templates to config
-    log "Preparing configuration files..."
-    cp "${TEMPLATES_DIR}/target-cloud-init.yaml" "${CONFIG_DIR}/target-cloud-init.yaml"
-    cp "${TEMPLATES_DIR}/attacker-cloud-init.yaml" "${CONFIG_DIR}/attacker-cloud-init.yaml"
-    
-    # Create VMs with basic configuration
-    create_vms_basic
-    
-    # Deploy scripts to VMs
-    deploy_target_scripts
-    deploy_attacker_scripts
-    
-    # Configure services
-    configure_target_services
-    
-    # Configure environment
-    configure_environment_post_create
-    
-    # Show summary
-    show_environment_summary
-}
-
-create_vms_basic() {
-    log "Creating virtual machines with basic configuration..."
-    
-    # Create attacker VM
-    log "Creating attacker VM..."
-    multipass launch --name "$VM_ATTACKER" \
-        --cpus 2 --memory 2G --disk 10G \
-        --cloud-init "${CONFIG_DIR}/attacker-cloud-init.yaml" || error "Error creating attacker VM"
-    
-    # Create target VM
-    log "Creating target VM..."
-    multipass launch --name "$VM_TARGET" \
-        --cpus 2 --memory 2G --disk 10G \
-        --cloud-init "${CONFIG_DIR}/target-cloud-init.yaml" || error "Error creating target VM"
-    
-    # Wait for initialization
-    log "Waiting for VMs to initialize..."
-    sleep 30
-    
-    success "VMs created successfully"
-}
-
-configure_environment_post_create() {
-    # Get IPs and save them
-    local target_ip=$(get_vm_ip "$VM_TARGET")
-    local attacker_ip=$(get_vm_ip "$VM_ATTACKER")
-    
-    log "Target IP: $target_ip"
-    log "Attacker IP: $attacker_ip"
-    
-    # Save IPs for later use
-    save_vm_ips "$target_ip" "$attacker_ip"
-    
-    # Configure attacker with target IP
-    configure_attacker_aliases "$target_ip"
-    
-    # Verify services are running
-    sleep 10
-    verify_services || warn "Some services may not be ready yet"
 }
 
 verify_services() {
@@ -371,7 +398,6 @@ verify_services() {
     
     local services_ok=true
     
-    # Check target services
     if multipass exec "$VM_TARGET" -- systemctl is-active --quiet vulnerable-server.service; then
         log "✓ TCP Server service is running"
     else
@@ -386,8 +412,7 @@ verify_services() {
         services_ok=false
     fi
     
-    # Check attacker scripts
-    if multipass exec "$VM_ATTACKER" -- test -x /opt/attack-scripts/port-scanner.py; then
+    if multipass exec "$VM_TARGET" -- test -x /opt/attack-scripts/port-scanner.py; then
         log "✓ Attacker scripts deployed"
     else
         warn "✗ Attacker scripts missing"
@@ -410,7 +435,7 @@ show_environment_summary() {
         error "VM IP configuration not found"
     fi
     
-    success "Environment successfully created with separated scripts!"
+    success "Environment successfully created with separated scripts and services!"
     echo -e "${CYAN}┌─────────────────────────────────────────┐${NC}"
     echo -e "${CYAN}│${NC} ${BLUE}Lab Environment Details${NC}                 ${CYAN}│${NC}"
     echo -e "${CYAN}├─────────────────────────────────────────┤${NC}"
@@ -421,9 +446,10 @@ show_environment_summary() {
     echo -e "${CYAN}│${NC}   TCP Server:  ${GREEN}${TARGET_IP}:9000${NC}       ${CYAN}│${NC}"
     echo -e "${CYAN}│${NC}   HTTP Server: ${GREEN}${TARGET_IP}:8080${NC}       ${CYAN}│${NC}"
     echo -e "${CYAN}├─────────────────────────────────────────┤${NC}"
-    echo -e "${CYAN}│${NC} ${PURPLE}Scripts Deployed:${NC}                       ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}   Target: 3 scripts                    ${CYAN}│${NC}"
-    echo -e "${CYAN}│${NC}   Attacker: 4 scripts                  ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC} ${PURPLE}Components Deployed:${NC}                    ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}   Target scripts: 3                    ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}   Attacker scripts: 4                  ${CYAN}│${NC}"
+    echo -e "${CYAN}│${NC}   Systemd services: 3                  ${CYAN}│${NC}"
     echo -e "${CYAN}└─────────────────────────────────────────┘${NC}"
     
     show_quick_commands
@@ -434,9 +460,9 @@ show_quick_commands() {
     echo -e "  ${YELLOW}$0 test${NC}                    # Run automated tests"
     echo -e "  ${YELLOW}$0 client${NC}                  # Interactive TCP client"
     echo -e "  ${YELLOW}$0 status${NC}                  # Check status"
+    echo -e "  ${YELLOW}$0 service-status${NC}          # Detailed service status"
     echo -e "  ${YELLOW}$0 update-scripts${NC}          # Update scripts only"
-    echo -e "  ${YELLOW}multipass shell $VM_ATTACKER${NC}  # Connect to attacker"
-    echo -e "  ${YELLOW}multipass shell $VM_TARGET${NC}    # Connect to target"
+    echo -e "  ${YELLOW}$0 update-services${NC}         # Update service files"
     
     echo -e "\n${BLUE}In attacker VM, use these shortcuts:${NC}"
     echo -e "  ${CYAN}lab-help${NC}      - Show all available commands"
@@ -446,7 +472,34 @@ show_quick_commands() {
     echo -e "  ${CYAN}lab-logs${NC}      - View logs"
 }
 
-# Basic functions if modules aren't available
+update_scripts_only() {
+    if [[ ! -f "${CONFIG_DIR}/vm_ips.conf" ]]; then
+        error "Environment not configured. Run 'create' first."
+    fi
+    
+    log "Updating scripts on existing VMs..."
+    
+    if ! multipass list | grep -q "$VM_TARGET.*Running"; then
+        error "Target VM is not running"
+    fi
+    
+    if ! multipass list | grep -q "$VM_ATTACKER.*Running"; then
+        error "Attacker VM is not running"
+    fi
+    
+    deploy_target_scripts
+    deploy_attacker_scripts
+    
+    log "Restarting target services..."
+    multipass exec "$VM_TARGET" -- bash -c "
+        sudo systemctl restart vulnerable-server.service vulnerable-web.service
+        sudo systemctl status vulnerable-server.service vulnerable-web.service --no-pager
+    "
+    
+    success "Scripts updated successfully"
+}
+
+# Basic functions for fallback
 basic_destroy_environment() {
     log "Destroying lab environment..."
     
@@ -476,7 +529,6 @@ basic_show_status() {
         
         echo -e "\n${BLUE}=== SERVICES STATUS ===${NC}"
         if multipass list | grep -q "$VM_TARGET.*Running"; then
-            # Check services
             if multipass exec "$VM_TARGET" -- systemctl is-active vulnerable-server.service >/dev/null 2>&1; then
                 echo -e "TCP Server (9000):  ${GREEN}RUNNING${NC}"
             else
@@ -492,7 +544,7 @@ basic_show_status() {
             echo -e "Target VM: ${RED}NOT RUNNING${NC}"
         fi
         
-        echo -e "\n${BLUE}=== SCRIPTS STATUS ===${NC}"
+        echo -e "\n${BLUE}=== COMPONENTS STATUS ===${NC}"
         if multipass list | grep -q "$VM_ATTACKER.*Running"; then
             if multipass exec "$VM_ATTACKER" -- test -f /opt/attack-scripts/port-scanner.py; then
                 echo -e "Attack Scripts: ${GREEN}DEPLOYED${NC}"
@@ -505,104 +557,54 @@ basic_show_status() {
     fi
 }
 
-basic_run_tests() {
-    if [[ ! -f "${CONFIG_DIR}/vm_ips.conf" ]]; then
-        error "Environment not configured. Run 'create' first."
-    fi
-    
-    source "${CONFIG_DIR}/vm_ips.conf"
-    log "Running automated tests with separated scripts..."
-    
-    echo -e "\n${PURPLE}=== ENHANCED PORT SCAN ===${NC}"
-    multipass exec "$VM_ATTACKER" -- python3 /opt/attack-scripts/port-scanner.py "$TARGET_IP" -p common 2>/dev/null || echo "Port scanner not available"
-    
-    echo -e "\n${PURPLE}=== CONNECTION TESTS ===${NC}"
-    multipass exec "$VM_ATTACKER" -- python3 /opt/attack-scripts/connection-tester.py "$TARGET_IP" -t both -c 3 2>/dev/null || echo "Connection tester not available"
-    
-    echo -e "\n${PURPLE}=== WEB VULNERABILITY SCAN ===${NC}"
-    multipass exec "$VM_ATTACKER" -- python3 /opt/attack-scripts/web-fuzzer.py "$TARGET_IP" 2>/dev/null || echo "Web fuzzer not available"
-    
-    success "Enhanced tests completed"
-}
-
-basic_run_interactive_client() {
-    if [[ ! -f "${CONFIG_DIR}/vm_ips.conf" ]]; then
-        error "Environment not configured. Run 'create' first."
-    fi
-    
-    source "${CONFIG_DIR}/vm_ips.conf"
-    log "Starting enhanced interactive client..."
-    info "Connecting to vulnerable server at $TARGET_IP:9000"
-    
-    multipass exec "$VM_ATTACKER" -- python3 /opt/attack-scripts/interactive-client.py "$TARGET_IP" -p 9000 2>/dev/null || {
-        info "Enhanced client not available, using netcat fallback:"
-        multipass exec "$VM_ATTACKER" -- nc "$TARGET_IP" 9000
-    }
-}
-
 show_enhanced_help() {
     echo -e "${BLUE}USAGE:${NC} $0 [OPTION]"
     echo
-    echo -e "${BLUE}OPTIONS:${NC}"
-    echo -e "  ${YELLOW}create${NC}        Create the lab environment (2 VMs + scripts)"
-    echo -e "  ${YELLOW}destroy${NC}       Destroy the lab environment completely"
-    echo -e "  ${YELLOW}status${NC}        Show detailed VM and service status"
-    echo -e "  ${YELLOW}test${NC}          Run comprehensive automated tests"
-    echo -e "  ${YELLOW}client${NC}        Run enhanced interactive client"
-    echo -e "  ${YELLOW}update-scripts${NC} Update Python scripts on existing VMs"
-    echo -e "  ${YELLOW}help${NC}          Show this help message"
+    echo -e "${BLUE}MAIN OPTIONS:${NC}"
+    echo -e "  ${YELLOW}create${NC}          Create the lab environment (VMs + scripts + services)"
+    echo -e "  ${YELLOW}destroy${NC}         Destroy the lab environment completely"
+    echo -e "  ${YELLOW}status${NC}          Show detailed VM and service status"
+    echo -e "  ${YELLOW}test${NC}            Run comprehensive automated tests"
+    echo -e "  ${YELLOW}client${NC}          Run enhanced interactive client"
+    echo -e "  ${YELLOW}help${NC}            Show this help message"
     echo
-    echo -e "${BLUE}NEW FEATURES:${NC}"
-    echo -e "  • ${GREEN}Separated Python scripts${NC} for better maintainability"
-    echo -e "  • ${GREEN}Enhanced vulnerability testing${NC} with detailed reporting"
-    echo -e "  • ${GREEN}Interactive exploitation client${NC} with command completion"
-    echo -e "  • ${GREEN}Comprehensive web fuzzing${NC} (XSS, traversal, endpoints)"
-    echo -e "  • ${GREEN}Script update capability${NC} without VM recreation"
+    echo -e "${BLUE}MANAGEMENT OPTIONS:${NC}"
+    echo -e "  ${YELLOW}update-scripts${NC}  Update Python scripts on existing VMs"
+    echo -e "  ${YELLOW}update-services${NC} Update systemd service files"
+    echo -e "  ${YELLOW}restart-services${NC} Restart all lab services"
+    echo -e "  ${YELLOW}service-status${NC}  Show detailed service status"
     echo
-    echo -e "${BLUE}SCRIPT ORGANIZATION:${NC}"
-    echo -e "  target-scripts/       ${GREEN}# Scripts deployed to target VM${NC}"
-    echo -e "  attacker-scripts/     ${GREEN}# Scripts deployed to attacker VM${NC}"
-    echo -e "  templates/            ${GREEN}# Cloud-init configuration templates${NC}"
-    echo -e "  scripts/              ${GREEN}# Modular bash components${NC}"
-    echo
-    echo -e "${BLUE}SERVICES DEPLOYED:${NC}"
-    echo -e "  • ${GREEN}Enhanced TCP Server${NC}     Port 9000  (Command injection, file access)"
-    echo -e "  • ${GREEN}Vulnerable Web App${NC}      Port 8080  (XSS, traversal, info disclosure)"
-    echo -e "  • ${GREEN}System Monitor${NC}          Background (Activity logging)"
-    echo -e "  • ${GREEN}SSH Access${NC}              Port 22    (Remote access)"
+    echo -e "${BLUE}PROJECT STRUCTURE:${NC}"
+    echo -e "  target-scripts/       ${GREEN}# Python scripts for target VM${NC}"
+    echo -e "  attacker-scripts/     ${GREEN}# Python scripts for attacker VM${NC}"
+    echo -e "  services/             ${GREEN}# Systemd service files${NC}"
+    echo -e "  templates/            ${GREEN}# Cloud-init templates${NC}"
+    echo -e "  scripts/              ${GREEN}# Bash utility modules${NC}"
     echo
     echo -e "${BLUE}EXAMPLES:${NC}"
     echo -e "  ${CYAN}$0 create${NC}                    # Create complete environment"
-    echo -e "  ${CYAN}$0 test${NC}                      # Run all automated tests"
-    echo -e "  ${CYAN}$0 client${NC}                    # Interactive exploitation session"
-    echo -e "  ${CYAN}$0 update-scripts${NC}            # Update scripts without recreating VMs"
-    echo -e "  ${CYAN}$0 status${NC}                    # Detailed status check"
-    echo -e "  ${CYAN}$0 destroy${NC}                   # Clean up everything"
+    echo -e "  ${CYAN}$0 service-status${NC}            # Check service health"
+    echo -e "  ${CYAN}$0 restart-services${NC}          # Restart all services"
+    echo -e "  ${CYAN}$0 update-services${NC}           # Update service configurations"
     echo
-    echo -e "  ${CYAN}multipass shell attacker${NC}     # Direct shell access"
-    echo -e "  ${CYAN}multipass shell target${NC}       # Direct shell access"
-    echo
-    echo -e "${GREEN}NEW:${NC} In attacker VM, use ${CYAN}lab-help${NC} to see all available testing commands"
+    echo -e "${GREEN}TIP:${NC} All components can be updated individually without recreating VMs"
 }
 
 # =============================================================================
-# MAIN FUNCTION UPDATED
+# MAIN FUNCTION
 # =============================================================================
 
 main() {
-    # Print banner if function exists
     if type print_banner >/dev/null 2>&1; then
         print_banner
     else
-        echo -e "${CYAN}=== CYBERSECURITY LAB v3.1 - Enhanced with Separated Scripts ===${NC}"
+        echo -e "${CYAN}=== CYBERSECURITY LAB v3.2 - Complete Modular Version ===${NC}"
     fi
     
-    # Check dependencies if function exists
     if type check_dependencies >/dev/null 2>&1; then
         check_dependencies
     fi
     
-    # Handle command line arguments
     case "${1:-menu}" in
         create)
             create_environment
@@ -638,6 +640,15 @@ main() {
         update-scripts)
             update_scripts_only
             ;;
+        update-services)
+            update_services_only
+            ;;
+        restart-services)
+            restart_services
+            ;;
+        service-status)
+            show_service_status
+            ;;
         menu|connect)
             if type interactive_menu >/dev/null 2>&1; then
                 interactive_menu
@@ -647,11 +658,7 @@ main() {
             fi
             ;;
         help|--help|-h|"")
-            if type show_help >/dev/null 2>&1; then
-                show_help
-            else
-                show_enhanced_help
-            fi
+            show_enhanced_help
             ;;
         *)
             error "Unknown option: $1. Use 'help' to see available options."
@@ -659,8 +666,6 @@ main() {
     esac
 }
 
-# Trap cleanup on script exit
 trap 'echo -e "\n${YELLOW}Script interrupted. Environment preserved.${NC}"' INT
 
-# Start the script
 main "$@"

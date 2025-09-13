@@ -1,0 +1,40 @@
+[Unit]
+Description=Vulnerable TCP Server for Cybersecurity Lab
+Documentation=https://github.com/manzolo/cybersecurity-lab
+After=network.target
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/vulnerable-server.py --host 0.0.0.0 --port 9000
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5
+RestartPreventExitStatus=1
+
+# Security settings (minimal for educational purposes)
+User=root
+Group=root
+
+# Logging
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=vulnerable-server
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+Environment=LAB_MODE=target
+
+# Resource limits (to prevent DoS during testing)
+LimitNOFILE=1024
+LimitNPROC=512
+
+# Systemd features
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
+Alias=vuln-tcp.service

@@ -1,0 +1,47 @@
+[Unit]
+Description=Target System Monitor for Cybersecurity Lab
+Documentation=https://github.com/manzolo/cybersecurity-lab
+After=network.target
+After=vulnerable-server.service
+After=vulnerable-web.service
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/monitor.sh
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+RestartPreventExitStatus=1
+
+# Security settings
+User=root
+Group=root
+
+# Logging
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=target-monitor
+
+# Environment
+Environment=LOG_LEVEL=INFO
+Environment=MONITOR_INTERVAL=30
+Environment=LAB_MODE=target
+
+# Resource limits (monitoring can be resource intensive)
+LimitNOFILE=2048
+LimitNPROC=256
+
+# Systemd features
+KillMode=process
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+# Monitoring specific settings
+IOSchedulingClass=3
+IOSchedulingPriority=7
+Nice=10
+
+[Install]
+WantedBy=multi-user.target
+Alias=lab-monitor.service
