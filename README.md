@@ -179,35 +179,6 @@ This lab environment is designed to teach:
 ### System Status Overview
 <img width="1085" height="416" alt="image" src="https://github.com/user-attachments/assets/8a13cb0c-9e1c-4a18-b180-8eb5b664ee28" />
 
-## 🔧 Advanced Usage
-
-### Customizing Vulnerabilities
-
-Edit the Python scripts in `target-scripts/` to modify or add vulnerabilities:
-
-```python
-# In target-scripts/web-server.py
-elif parsed_path.path == '/my-custom-endpoint':
-    self.serve_custom_vulnerability(query)
-```
-
-### Adding New Testing Tools
-
-Place new scripts in `attacker-scripts/` and update with:
-
-```bash
-./lab.sh update-scripts
-```
-
-### Modifying Services
-
-Edit systemd service files in `services/` and apply changes:
-
-```bash
-./lab.sh update-services
-./lab.sh restart-services
-```
-
 ## 🛡️ Security Notice
 
 ⚠️ **EDUCATIONAL USE ONLY**
